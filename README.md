@@ -154,15 +154,15 @@ geometry_msgs/msg/PoseStamped \
   },
   pose: {
     position: {
-      x: -4.648,
-      y: -1.165,
+      x: -3.97576,
+      y: 0.239322,
       z: 0.0
     },
     orientation: {
       x: 0.0,
       y: 0.0,
-      z: 0.999654,
-      w: 0.026293
+      z: 0.998357,
+      w: 0.0573035
     }
   }
 }"

@@ -63,7 +63,7 @@ project_final/
 The two nodes that make Phase 2 work both live in `human_detector/human_detector/`:
 
 - **`person_detector_node.py`** — subscribes to the camera feed, runs a YOLOv4-tiny (OpenCV DNN) forward pass filtered to the COCO `person` class, debounces detections over several consecutive frames to avoid flicker, and publishes a latched `/person_detected` (`std_msgs/Bool`).
-- **`wave_interact.py`** — owns the Nav2 goal handle and the MoveItPy interface. It accepts goals on `/interaction_goal_pose`, drives the full state machine (`idle → sending → navigating → cancelling → waving → resuming → succeeded`), and plans/executes the wave (open hand → arm to `ready` → 3 wave cycles → arm back to `ready`) using the `arm_r` and `hand_r` MoveIt planning groups.
+- **`wave_interact.py`** — owns the Nav2 goal handle and the MoveItPy interface. It accepts goals on `/interaction_goal_pose`, drives the full state machine (`idle → sending → navigating → cancelling → waving → resuming → succeeded`), and plans/executes the wave (open hand → arm to `ready` → 2 wave cycles → arm back to `ready`) using the `arm_r` and `hand_r` MoveIt planning groups.
 
 ---
 

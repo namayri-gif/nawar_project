@@ -1,4 +1,0 @@
-Invoking command in '/root/workspaces/ros2_ws/build/library_world': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --build /root/workspaces/ros2_ws/build/library_world -- -j4 -l4
-Invoked command in '/root/workspaces/ros2_ws/build/library_world' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --build /root/workspaces/ros2_ws/build/library_world -- -j4 -l4
-Invoking command in '/root/workspaces/ros2_ws/build/library_world': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --install /root/workspaces/ros2_ws/build/library_world
-Invoked command in '/root/workspaces/ros2_ws/build/library_world' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy /usr/bin/cmake --install /root/workspaces/ros2_ws/build/library_world

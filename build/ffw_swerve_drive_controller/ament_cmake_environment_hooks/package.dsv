@@ -1,4 +1,0 @@
-source;share/ffw_swerve_drive_controller/local_setup.bash
-source;share/ffw_swerve_drive_controller/local_setup.dsv
-source;share/ffw_swerve_drive_controller/local_setup.sh
-source;share/ffw_swerve_drive_controller/local_setup.zsh

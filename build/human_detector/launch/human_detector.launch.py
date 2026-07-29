@@ -1,1 +1,0 @@
-/root/workspaces/ros2_ws/src/ai-worker-sim/human_detector/launch/human_detector.launch.py

@@ -1,4 +1,0 @@
-source;share/ffw_moveit_config/local_setup.bash
-source;share/ffw_moveit_config/local_setup.dsv
-source;share/ffw_moveit_config/local_setup.sh
-source;share/ffw_moveit_config/local_setup.zsh

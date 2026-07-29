@@ -1,1 +1,0 @@
-#pragma message("#include \"swerve_drive_controller_parameter.hpp\" is deprecated. Use #include <ffw_swerve_drive_controller/swerve_drive_controller_parameter.hpp> instead.")

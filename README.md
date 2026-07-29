@@ -1,252 +1,937 @@
-# AI Worker Simulation — Warehouse Navigation & Human Interaction
+# AI Worker Simulation: Human-Aware Warehouse Robot
 
-**Final internship project — ROS 2 (Jazzy) / Nav2 / MoveIt / Gazebo**
+Final internship project using **ROS 2 Jazzy, Gazebo, Nav2, SLAM Toolbox, OpenCV, YOLOv4-Tiny, MoveIt 2 configuration, and ros2_control**.
 
-This repository implements **Project 1** of the AI Worker Simulation brief: an `ffw_sh5` warehouse robot that maps its environment, navigates autonomously between goals, and reacts naturally when it encounters a person — stopping, waving, and resuming its route on its own.
+## 1. Project Idea
 
+The project extends the ETGAH `ffw_sh5` warehouse robot so it can navigate to a goal and react when it detects a person.
+
+The final behaviour is:
+
+```text
+Receive a navigation goal
+        ↓
+Save the original goal
+        ↓
+Send the goal to Nav2
+        ↓
+Move through the warehouse
+        ↓
+Detect a person with the RGB camera
+        ↓
+Measure the distance using the depth camera
+        ↓
+Cancel the active Nav2 goal
+        ↓
+Confirm that the robot has stopped
+        ↓
+Wave with the right arm
+        ↓
+Return the arm to its home position
+        ↓
+Resend the saved goal
+        ↓
+Continue to the original destination
+```
+
+The robot does **not** approach or rotate toward the person. It pauses, waves, and continues its original task.
+
+This README explains what was changed, why the changes were needed, and how the full project works.
 
 ---
 
-## My contribution
+## 2. Repository Structure
 
-The `ffw_sh5` robot stack (description, bringup, drive controller, teleop) came from the shared internship base workspace. My work on top of that base was:
-
-- **`human_detector` package — built from scratch.** Both nodes (`person_detector_node.py` for YOLOv4-tiny person detection, and `wave_interact.py` for the Nav2 goal ownership / cancel / wave / resume state machine), the launch file wiring them together with MoveItPy, and the model files.
-- **`ffw_description`** — edits to the robot's Gazebo plugins (sensor/plugin configuration) to get the camera and lidar feeding the topics this project needed.
-- **`ffw_navigation`** — configured and ran the SLAM Toolbox / Nav2 setup for the warehouse world: tuned `navigation.yaml`, generated and saved the map used for localization, and validated multi-goal navigation and obstacle avoidance.
-- **`ffw_moveit_config`** — configured and used the MoveIt setup for the wave motion: the `arm_r` / `hand_r` planning groups and the `ready` / `open` SRDF states that `wave_interact.py` plans against.
-
----
-
-## What it does
-
-The robot runs a full warehouse loop:
-
-1. **Maps** the warehouse world with SLAM Toolbox and saves a reusable occupancy grid map.
-2. **Navigates** autonomously to goal poses using Nav2, relying on its costmap for obstacle avoidance around shelving, pallets, and walls.
-3. **Watches** the world through its onboard camera with a YOLOv4-tiny detector looking specifically for people (separate from Nav2's lidar-based obstacle avoidance).
-4. **Reacts** the moment a person is detected: it cancels its current Nav2 goal, plays a MoveIt-planned wave with its right arm and hand, and then automatically resumes the original goal — no need to wait for the person to move.
-
-```
- SLAM mapping  →  Nav2 navigation  →  person detected?  →  cancel goal  →  wave (MoveIt)  →  resume goal
-```
-
-| Stage | What happens |
-|---|---|
-| SLAM mapping | Builds the warehouse map with `slam_toolbox` |
-| Nav2 navigation | Sends and executes navigation goals |
-| Obstacle avoidance | Nav2 costmap avoids static objects (shelves, pallets, walls) |
-| Human detection | Camera + YOLOv4-tiny identifies a person |
-| Stop | Current Nav2 goal is cancelled |
-| Wave | MoveIt executes a fixed wave trajectory on the right arm/hand |
-| Resume | The original goal is automatically resent to Nav2 |
-
----
-
-## Repository layout
-
-```
-project_final/
+```text
+nawar_project/
+├── README.md
 └── src/
-    ├── ai-worker-sim/               # Robot stack (description, control, nav, moveit, detection)
-    │   ├── ffw_description/         # URDF/xacro robot model (base + my Gazebo plugin edits)
-    │   ├── ffw_bringup/              # Gazebo launch files (incl. warehouse_storage launch) — base
-    │   ├── ffw_navigation/           # Nav2 + SLAM Toolbox config, launch, and saved map — configured/used by me
-    │   ├── ffw_moveit_config/        # MoveIt config (arm_r / hand_r planning groups, SRDF states) — configured/used by me
-    │   ├── ffw_swerve_drive_controller/  # base
-    │   ├── ffw_teleop/                    # base
-    │   └── human_detector/           # Person detection (YOLOv4-tiny) + wave/interaction node — built by me
-    └── Gazebo_worlds/
-        └── warehouse_worlds/         # Warehouse Gazebo worlds (storage, logistics, distribution)
+    └── ai-worker-sim/
+        ├── ffw_bringup/
+        ├── ffw_description/
+        ├── ffw_moveit_config/
+        ├── ffw_navigation/
+        ├── ffw_swerve_drive_controller/
+        ├── ffw_teleop/
+        ├── human_detector/
+        ├── library_world/
+        └── warehouse_worlds/
 ```
 
-The two nodes that make Phase 2 work both live in `human_detector/human_detector/`:
+| Package | Purpose |
+|---|---|
+| `ffw_bringup` | Starts Gazebo, spawns the robot, starts controllers, bridges topics, and merges the two lidars. |
+| `ffw_description` | Contains the robot URDF/Xacro, joints, links, sensors, and Gazebo plugins. |
+| `ffw_navigation` | Contains SLAM, the saved map, AMCL, Nav2 parameters, launch files, and RViz configuration. |
+| `ffw_moveit_config` | Contains the SRDF, planning groups, named poses, controller mapping, `moveit_cpp.yaml`, and joint limits. |
+| `human_detector` | New package containing person detection and the cancel-wave-resume interaction. |
+| `ffw_swerve_drive_controller` | Converts `/cmd_vel` into commands for the robot's swerve-drive base. |
+| `ffw_teleop` | Allows manual driving during mapping and testing. |
+| `warehouse_worlds` | Contains the warehouse worlds and Gazebo models. |
 
-- **`person_detector_node.py`** — subscribes to the camera feed, runs a YOLOv4-tiny (OpenCV DNN) forward pass filtered to the COCO `person` class, debounces detections over several consecutive frames to avoid flicker, and publishes a latched `/person_detected` (`std_msgs/Bool`).
-- **`wave_interact.py`** — owns the Nav2 goal handle and the MoveItPy interface. It accepts goals on `/interaction_goal_pose`, drives the full state machine (`idle → sending → navigating → cancelling → waving → resuming → succeeded`), and plans/executes the wave (open hand → arm to `ready` → 2 wave cycles → arm back to `ready`) using the `arm_r` and `hand_r` MoveIt planning groups.
+The original ETGAH workspace provided the robot model and basic simulation. My work focused on enabling the camera, configuring navigation, preparing the arm configuration, creating human detection, and integrating the complete interaction sequence.
 
 ---
 
-## Requirements
+# What I Changed
 
-- Ubuntu 24.04 + **ROS 2 Jazzy**
-- Gazebo (`ros_gz_sim`)
-- Nav2 and SLAM Toolbox
-- MoveIt 2 (with `moveit_py`)
+## 3. Enabled the ZED Camera
 
-```bash
-sudo apt update
-sudo apt install ros-jazzy-gz-ros2-control
-sudo apt install ros-jazzy-moveit
-sudo apt install ros-jazzy-realsense2-description
-sudo apt install ros-jazzy-dual-laser-merger
-sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox
+The human detector needs an RGB image and depth data. The required ZED camera section therefore had to be enabled in:
+
+```text
+src/ai-worker-sim/ffw_description/gazebo/
+ffw_sh5_rev1_follower/ffw_sh5_follower.gazebo.xacro
 ```
 
-Python dependencies for the detector: `opencv-python`, `numpy`, `cv_bridge` (installed via the ROS packages above, plus `python3-opencv`).
+The camera provides:
+
+```text
+/zedm/image
+/zedm/depth/image_raw
+/zedm/camera_info
+```
+
+Each topic has a different role:
+
+- `/zedm/image` is used by YOLO to detect people.
+- `/zedm/depth/image_raw` gives the distance at image locations.
+- `/zedm/camera_info` provides the camera intrinsics needed to calculate a 3D point.
+
+Gazebo topics also need to be converted into ROS 2 messages. The required bridges are defined in:
+
+```text
+src/ai-worker-sim/ffw_bringup/config/common/gz_bridge.yaml
+```
+
+### Check the camera
+
+After launching Gazebo:
+
+```bash
+ros2 topic list | grep zedm
+ros2 topic hz /zedm/image
+ros2 topic hz /zedm/depth/image_raw
+```
 
 ---
 
-## Build
+## 4. Updated the Warehouse World
 
-```bash
-git clone https://github.com/namayri-gif/project_final.git
-cd project_final
-colcon build
-source install/setup.bash
+The storage warehouse was updated to the latest ETGAH version.
+
+The update included:
+
+- removing support for the moving fan to improve simulation speed;
+- loading the latest storage-world files;
+- replacing the old warehouse logo with the new logo.
+
+The world package is:
+
+```text
+src/ai-worker-sim/warehouse_worlds
 ```
+
+The simulation launch file adds its world and model folders to `GZ_SIM_RESOURCE_PATH`, allowing Gazebo to find the warehouse models and textures.
 
 ---
-## Phase 1:
 
-### 1. Launch the warehouse simulation
+## 5. Configured Mapping and Nav2
+
+The main navigation files are:
+
+```text
+src/ai-worker-sim/ffw_navigation/config/navigation.yaml
+src/ai-worker-sim/ffw_navigation/config/mapper_params_online_sync.yaml
+src/ai-worker-sim/ffw_navigation/launch/navigation.launch.py
+src/ai-worker-sim/ffw_navigation/maps/map.yaml
+```
+
+### Mapping
+
+SLAM Toolbox uses:
+
+```text
+/scan + /odom + TF → occupancy-grid map
+```
+
+Important frame settings are:
+
+```yaml
+map_frame: map
+odom_frame: odom
+base_frame: base_link
+scan_topic: /scan
+```
+
+To create a new map:
 
 ```bash
-ros2 launch ffw_bringup ffw_sh5_warehouse_storage_launch.launch.py
+ros2 launch ffw_navigation navigation.launch.py use_slam:=true
 ```
 
-This brings up Gazebo with the storage warehouse world, spawns the `ffw_sh5` robot, starts the controllers, the laser merger, and RViz.
-
-### 2. Mapping 
-
-To build a new map with SLAM Toolbox:
+Drive around the warehouse until the map is complete, then save it:
 
 ```bash
-ros2 launch ffw_navigation online_sync_launch.py use_slam:=true
+cd src/ai-worker-sim/ffw_navigation/maps
+ros2 run nav2_map_server map_saver_cli -f map
 ```
 
-Drive the robot around the warehouse (teleop or Nav2 goals) until the map looks complete, then save it with `slam_toolbox`'s map saver (or `nav2_map_server`'s `map_saver_cli`). The map used for this submission is already saved at:
+This creates `map.pgm` and `map.yaml`.
 
-### 3. Saving the Map
+### Navigation changes
+
+`navigation.yaml` was adjusted to improve:
+
+- robot speed;
+- turning speed;
+- goal tolerance;
+- costmap size and inflation;
+- obstacle detection ranges;
+- velocity smoothing;
+- AMCL initial pose;
+- planner and controller behaviour.
+
+The navigation pipeline is:
+
+```text
+Saved map + laser scan + odometry
+                ↓
+              AMCL
+                ↓
+      Robot pose in the map
+                ↓
+        Nav2 global planner
+                ↓
+           Global path
+                ↓
+        Nav2 local controller
+                ↓
+             /cmd_vel
+                ↓
+       Swerve-drive controller
 ```
-cd ros2 _ws/src/ai-worker-sim/ffw_navigation/maps
-ros2 run nav2_map_server map_saver_cli -f map2
-```
-### 4. Nav2 Goals
+
+Normal navigation is launched with:
 
 ```bash
 ros2 launch ffw_navigation navigation.launch.py
 ```
 
-- Set Pose Estimate
-- Set 2D Goal Pose
+The launch file starts localisation, Nav2, and RViz. RViz starts after a short delay so the Nav2 lifecycle nodes and TF publishers have time to activate.
 
-## Phase 2
+---
 
-### 1. Human detection + wave interaction
+## 6. Used MoveIt to Prepare the Wave
+
+The robot has seven right-arm joints and many hand joints. MoveIt was used during development to:
+
+- identify the correct right-arm planning group;
+- confirm the exact joint names;
+- inspect valid joint limits;
+- test collision-safe arm positions;
+- confirm the home position;
+- understand which controller executes the right-arm motion.
+
+The right-arm planning group is:
+
+```text
+arm_r
+```
+
+It contains:
+
+```text
+arm_r_joint1
+arm_r_joint2
+arm_r_joint3
+arm_r_joint4
+arm_r_joint5
+arm_r_joint6
+arm_r_joint7
+```
+
+The SRDF file is:
+
+```text
+src/ai-worker-sim/ffw_moveit_config/config/ffw.srdf
+```
+
+It defines groups such as `arm_r` and `hand_r`, named states such as `home`, and disabled collision pairs.
+
+### Why `moveit_cpp.yaml` was added
+
+The file:
+
+```text
+src/ai-worker-sim/ffw_moveit_config/config/moveit_cpp.yaml
+```
+
+was created so MoveItCpp could initialise:
+
+- the planning-scene monitor;
+- `robot_description`;
+- `/joint_states`;
+- the OMPL planning pipeline;
+- the planner and scaling values.
+
+This configuration was used while testing and validating arm poses.
+
+The final runtime wave is sent directly to the right-arm trajectory controller. This gives exact timing and avoids waiting for a new motion plan every time a person is detected.
+
+### Increasing arm speed
+
+The default arm motion was too slow, so the joint limits were updated in:
+
+```text
+src/ai-worker-sim/ffw_moveit_config/config/joint_limits.yaml
+```
+
+The arm joints use:
+
+```yaml
+max_velocity: 5.0
+max_acceleration: 5.0
+```
+
+Increasing the limit alone does not make the arm faster. The trajectory waypoint times must also be shortened while staying inside the permitted limits.
+
+---
+
+# Human Detection Package
+
+## 7. Package Structure
+
+A new Python package called `human_detector` was created:
+
+```text
+human_detector/
+├── human_detector/
+│   ├── person_detector_node.py
+│   └── wave_interact.py
+├── launch/
+│   └── human_detector.launch.py
+├── models/
+│   ├── coco.names
+│   ├── yolov4-tiny.cfg
+│   └── yolov4-tiny.weights
+├── package.xml
+├── setup.cfg
+└── setup.py
+```
+
+The package separates perception from robot control:
+
+```text
+person_detector_node.py = detect the person and measure distance
+wave_interact.py        = control navigation and the wave sequence
+```
+
+This separation makes each part easier to test.
+
+---
+
+## 8. How `person_detector_node.py` Works
+
+The detector subscribes to:
+
+```text
+/zedm/image
+/zedm/depth/image_raw
+/zedm/camera_info
+/interaction_active
+```
+
+It publishes:
+
+```text
+/person_detected
+/person_distance
+/person_target
+/person_detection/annotated
+```
+
+The detection process is:
+
+```text
+Receive RGB image
+        ↓
+Convert ROS image to OpenCV
+        ↓
+Create YOLO input blob
+        ↓
+Run YOLOv4-Tiny
+        ↓
+Keep only the COCO "person" class
+        ↓
+Apply non-maximum suppression
+        ↓
+Require several consecutive detections
+        ↓
+Read depth around each person
+        ↓
+Select the nearest person with valid depth
+        ↓
+Publish distance and 3D point
+        ↓
+Publish the detection event
+```
+
+### Why YOLOv4-Tiny
+
+Gazebo, Nav2, RViz, controllers, and detection run together. YOLOv4-Tiny is lighter than the full YOLOv4 model and is more suitable for real-time CPU detection in this simulation.
+
+### Detection stability
+
+The detector requires several consecutive frames before changing to the detected state. This prevents one uncertain frame from triggering the complete interaction.
+
+The launch file uses values such as:
+
+```yaml
+confidence_threshold: 0.50
+nms_threshold: 0.40
+detection_hold_frames: 3
+network_input_size: 320
+```
+
+### Distance calculation
+
+The node reads a small depth patch around the centre of the detected person instead of trusting one pixel. Invalid values are removed and the median valid depth is used.
+
+The camera intrinsics then convert the pixel and depth into a 3D camera-frame point:
+
+```text
+pixel position + depth + camera intrinsics = 3D point
+```
+
+The distance and target are published before `/person_detected`, so the interaction node already has a valid measurement when the event arrives.
+
+---
+
+## 9. How `wave_interact.py` Works
+
+This node connects Nav2, person detection, odometry, joint feedback, and the right-arm controller.
+
+Its responsibilities are:
+
+1. receive a goal;
+2. save a copy of the goal;
+3. send the goal to Nav2;
+4. detect the first person event;
+5. cancel the active Nav2 goal;
+6. confirm that the base stopped;
+7. execute the wave;
+8. confirm that the arm returned home;
+9. resend the original goal.
+
+### Goal ownership
+
+A Nav2 goal is managed through an action client. The client that sends the goal receives the goal handle used to cancel it.
+
+For this reason, `wave_interact.py` receives goals from:
+
+```text
+/goal_pose
+/interaction_goal_pose
+```
+
+It stores the pose and sends the `NavigateToPose` action goal itself. This gives the node the correct goal handle for cancellation and resume.
+
+### Interaction state machine
+
+```text
+idle
+  ↓
+sending_goal
+  ↓
+navigating
+  ↓
+cancelling_goal
+  ↓
+waving
+  ↓
+returning_home
+  ↓
+resuming_goal
+  ↓
+navigating
+  ↓
+succeeded
+```
+
+Simplified logic:
+
+```python
+when_goal_received(goal):
+    save(goal)
+    send_goal_to_nav2(goal)
+
+when_person_detected():
+    if state == NAVIGATING and interaction_not_done:
+        cancel_active_goal()
+        stop_base()
+        wave()
+        return_arm_home()
+        resend_saved_goal()
+```
+
+The state machine is needed because ROS 2 callbacks are asynchronous. Without it, cancellation, waving, and resume could overlap.
+
+Only one interaction is allowed for each goal. A person who remains visible therefore does not repeatedly trigger the wave.
+
+---
+
+## 10. Stopping Before Waving
+
+A successful cancel request does not prove that the robot is physically stationary.
+
+The node therefore:
+
+1. publishes zero velocity commands;
+2. monitors `/odom`;
+3. waits until linear and angular velocity stay below the configured thresholds.
+
+The wave starts only after the base is confirmed stationary.
+
+This prevents the robot from moving through the warehouse while its arm is raised.
+
+---
+
+## 11. Wave Motion
+
+The final wave is sent to:
+
+```text
+/arm_r_controller/follow_joint_trajectory
+```
+
+Action type:
+
+```text
+control_msgs/action/FollowJointTrajectory
+```
+
+The motion is:
+
+```text
+Current arm position
+        ↓
+Move arm to the side
+        ↓
+Raise the elbow
+        ↓
+Move wrist left and right twice
+        ↓
+Return to elbow-up position
+        ↓
+Return all seven arm joints to zero
+```
+
+The requested wave duration is approximately `2.80 seconds`.
+
+The home pose is:
+
+```python
+HOME_ARM_POSITIONS = [0.0] * 7
+```
+
+The node reads `/joint_states` and confirms that the arm is home before navigation resumes. This is safer than depending only on the controller's action-result message.
+
+---
+
+## 12. Launch File
+
+The file:
+
+```text
+src/ai-worker-sim/human_detector/launch/human_detector.launch.py
+```
+
+starts:
+
+```text
+wave_interact
+person_detector_node
+```
+
+`wave_interact` starts first. The detector starts after a short delay so the interaction node can create its subscriptions and action clients.
+
+The launch file also loads:
+
+- YOLO model paths;
+- RGB, depth, and camera-info topics;
+- detection thresholds;
+- stop thresholds;
+- arm timeouts;
+- the right-arm controller action name.
+
+---
+
+# ROS 2 Communication
+
+## 13. Main Topics
+
+| Topic | Type | Purpose |
+|---|---|---|
+| `/goal_pose` | `geometry_msgs/PoseStamped` | Goal from RViz. |
+| `/interaction_goal_pose` | `geometry_msgs/PoseStamped` | Alternative goal input. |
+| `/zedm/image` | `sensor_msgs/Image` | RGB input for YOLO. |
+| `/zedm/depth/image_raw` | `sensor_msgs/Image` | Depth input. |
+| `/zedm/camera_info` | `sensor_msgs/CameraInfo` | Camera intrinsics. |
+| `/person_detected` | `std_msgs/Bool` | Person-detection event. |
+| `/person_distance` | `std_msgs/Float32` | Distance in metres. |
+| `/person_target` | `geometry_msgs/PointStamped` | 3D camera-frame point. |
+| `/person_detection/annotated` | `sensor_msgs/Image` | Detection preview. |
+| `/interaction_active` | `std_msgs/Bool` | Shows that an interaction is running. |
+| `/odom` | `nav_msgs/Odometry` | Confirms that the base stopped. |
+| `/joint_states` | `sensor_msgs/JointState` | Confirms arm movement and home position. |
+| `/cmd_vel` | `geometry_msgs/Twist` | Mobile-base velocity command. |
+| `/wave_command` | `std_msgs/Bool` | Manual wave test. |
+
+## 14. Main Actions
+
+```text
+/navigate_to_pose
+nav2_msgs/action/NavigateToPose
+```
+
+This sends, cancels, and monitors the navigation goal.
+
+```text
+/arm_r_controller/follow_joint_trajectory
+control_msgs/action/FollowJointTrajectory
+```
+
+This executes the seven-joint arm trajectory.
+
+The custom package does not create a custom service. Topics are used for sensor data and events, while actions are used for long-running operations that require cancellation and a final result.
+
+## 15. TF
+
+The main transform chain is:
+
+```text
+map → odom → base_link → sensor and arm links
+```
+
+- `map → odom` comes from AMCL or SLAM Toolbox.
+- `odom → base_link` comes from odometry.
+- robot link transforms come from `robot_state_publisher` and the URDF.
+
+Nav2 needs a valid `map → base_link` transform. The detector publishes the person target in the camera optical frame, but the current behaviour uses it only for distance reporting, not for approaching the person.
+
+---
+
+# Installation and Running
+
+## 16. Clone and Build
 
 ```bash
+git clone https://github.com/namayri-gif/nawar_project.git
+cd nawar_project
+```
+
+Source ROS 2 and install dependencies:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+sudo apt update
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
+```
+
+Common required packages include:
+
+```bash
+sudo apt install -y \
+  ros-jazzy-gz-ros2-control \
+  ros-jazzy-moveit \
+  ros-jazzy-realsense2-description \
+  ros-jazzy-dual-laser-merger \
+  ros-jazzy-navigation2 \
+  ros-jazzy-nav2-bringup \
+  ros-jazzy-slam-toolbox \
+  ros-jazzy-cv-bridge \
+  python3-opencv \
+  python3-numpy
+```
+
+Build:
+
+```bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+After changing code or configuration:
+
+```bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+---
+
+## 17. Run the Complete Project
+
+Use three terminals.
+
+### Terminal 1: Gazebo and robot
+
+```bash
+cd ~/nawar_project
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch ffw_bringup ffw_sh5_warehouse_storage_launch.launch.py
+```
+
+Wait until Gazebo loads, the robot appears, and the controllers start.
+
+### Terminal 2: Nav2
+
+```bash
+cd ~/nawar_project
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+ros2 launch ffw_navigation navigation.launch.py
+```
+
+Wait until Nav2 becomes active and RViz opens.
+
+### Terminal 3: detection and interaction
+
+```bash
+cd ~/nawar_project
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
 ros2 launch human_detector human_detector.launch.py
 ```
 
-This starts `wave_interact` (MoveItPy + Nav2 client) immediately, and `person_detector_node` after a short delay so MoveIt has time to come up.
+Expected startup message:
 
-### 2. Send a navigation goal through terminal
+```text
+Ready: receive goal -> navigate -> detect -> cancel and stop -> wave -> arm home -> resume the saved goal.
+```
 
-Goals are sent through `wave_interact`'s own topic (rather than directly to Nav2) so that the node keeps ownership of the goal handle and can cleanly cancel and resume it. This is the exact goal used for the demo run:
+---
+
+## 18. Send a Goal
+
+### RViz
+
+Use the **2D Goal Pose** tool. RViz publishes `/goal_pose`, which is received and owned by `wave_interact.py`.
+
+### Terminal
 
 ```bash
 ros2 topic pub --once /interaction_goal_pose \
-geometry_msgs/msg/PoseStamped \
-"{
-  header: {
-    frame_id: 'map'
-  },
-  pose: {
-    position: {
-      x: -3.97576,
-      y: 0.239322,
-      z: 0.0
-    },
-    orientation: {
-      x: 0.0,
-      y: 0.0,
-      z: 0.998357,
-      w: 0.0573035
+  geometry_msgs/msg/PoseStamped \
+  "{
+    header: {frame_id: 'map'},
+    pose: {
+      position: {x: -3.97576, y: 0.239322, z: 0.0},
+      orientation: {x: 0.0, y: 0.0, z: 0.998357, w: 0.0573035}
     }
-  }
-}"
+  }"
 ```
 
-The robot starts navigating toward that pose. If the vision pipeline detects a person along the way, it cancels the goal, waves, and automatically resumes toward `(-4.648, -1.165)` once the wave finishes.
+The robot should move toward the goal. When a person is detected, it should stop, wave, return home, and continue toward the same destination.
 
-You can also trigger the wave on its own, without any navigation, for a quick sanity check:
+---
+
+# Testing
+
+## 19. Test Each Part Separately
+
+### Controllers
+
+```bash
+ros2 control list_controllers
+```
+
+Check that the swerve, right-arm, and joint-state controllers are active.
+
+### Camera
+
+```bash
+ros2 topic hz /zedm/image
+ros2 topic hz /zedm/depth/image_raw
+ros2 topic echo /zedm/camera_info --once
+```
+
+### Laser and TF
+
+```bash
+ros2 topic hz /scan
+ros2 run tf2_ros tf2_echo map base_link
+```
+
+### Person detection
+
+```bash
+ros2 topic echo /person_detected
+ros2 topic echo /person_distance
+ros2 topic echo /person_target
+```
+
+### Standalone wave
 
 ```bash
 ros2 topic pub --once /wave_command std_msgs/msg/Bool "{data: true}"
 ```
 
----
+Expected behaviour:
 
-## Interaction state machine
-
-`wave_interact.py` tracks a single interaction state so goal sending, cancellation, waving, and resuming can never overlap:
-
-```
-idle → sending → navigating → cancelling → waving → resuming → succeeded
-                     │                                              │
-                     └───────────────── (goal reached directly) ────┘
+```text
+Base stays still → arm rises → wrist waves twice → arm returns to zero
 ```
 
-- A new goal on `/interaction_goal_pose` is only accepted while the robot is `idle`.
-- `/person_detected` only triggers a cancellation while the robot is actively `navigating`, and is latched so a continuously-visible person doesn't retrigger the sequence.
-- The wave only starts after Nav2 reports the goal as **terminally cancelled** — not as soon as the cancel request is merely accepted.
-- The original goal is resumed automatically once the wave sequence completes successfully; if planning or execution fails at any step, the state machine moves to `failed` instead of silently continuing.
+### Complete sequence
+
+Expected terminal output:
+
+```text
+Sending original goal
+Nav2 accepted the original goal
+Person detected at distance X.XX m
+Cancelling the active navigation goal immediately
+Nav2 accepted cancellation; stopping the base before waving
+Base is confirmed stationary
+Sending maximum-speed wave trajectory
+Arm controller accepted wave trajectory
+Wave completed; arm reached home
+Sending resumed original goal
+Nav2 accepted the resumed original goal
+Navigation goal succeeded
+```
 
 ---
 
-## Notes on the wave
+# Common Problems
 
-- The wave uses a fixed joint-space sequence for `arm_r` (open `hand_r` → `arm_r` to `ready` → 3 alternating left/right sweep positions → back to `ready`), planned and executed with MoveItPy.
-- `arm_r` and `hand_r` are configured as separate MoveIt planning groups (`ffw_moveit_config/config/ffw.srdf`), which is what lets the hand open independently before the arm sweeps.
+## 20. Camera Topics Are Missing
+
+Check that:
+
+- the ZED camera section is enabled;
+- its bridges exist in `gz_bridge.yaml`;
+- the workspace was rebuilt;
+- Gazebo was completely restarted.
+
+```bash
+ros2 topic list | grep zedm
+```
+
+## 21. Person Is Detected but Distance Is Missing
+
+Check:
+
+```bash
+ros2 topic hz /zedm/depth/image_raw
+ros2 topic echo /zedm/camera_info --once
+```
+
+The detector rejects depth data that is too old compared with the RGB frame.
+
+## 22. Robot Detects but Does Not Stop
+
+The goal must pass through:
+
+```text
+/goal_pose
+```
+
+or:
+
+```text
+/interaction_goal_pose
+```
+
+This allows `wave_interact.py` to own the Nav2 goal handle.
+
+Check:
+
+```bash
+ros2 action info /navigate_to_pose
+ros2 topic echo /odom
+```
+
+## 23. Robot Stops but Does Not Wave
+
+Check:
+
+```bash
+ros2 control list_controllers
+ros2 action info /arm_r_controller/follow_joint_trajectory
+ros2 topic echo /joint_states
+```
+
+The right-arm action server and all seven right-arm joint states must exist.
+
+## 24. Arm Moves Too Slowly
+
+Check:
+
+```text
+ffw_moveit_config/config/joint_limits.yaml
+```
+
+Also check the `time_from_start` values in `wave_interact.py`. Larger times create slower movement.
+
+After changing robot or controller limits, rebuild and restart Gazebo.
+
+## 25. Navigation Does Not Resume
+
+The node will not resume if:
+
+- the original goal was not saved;
+- cancellation failed;
+- the arm did not return home;
+- Nav2 rejected the resumed goal.
+
+This is intentional: navigation must not restart while the arm is raised.
+
+## 26. TF Errors
+
+Check:
+
+```bash
+ros2 run tf2_ros tf2_echo map base_link
+ros2 run tf2_ros tf2_echo odom base_link
+```
+
+The frame names must match in the URDF, SLAM, AMCL, Nav2, and sensor messages.
 
 ---
 
-## Demos and Pictures
+# 27. Final Summary
 
-Mapping Video and Full Map pgm:
+The final project joins perception, navigation, and manipulation into one ROS 2 system:
 
-[scrnli_5yrzgF9Qf7FLP3.pdf](https://github.com/user-attachments/files/30356629/scrnli_5yrzgF9Qf7FLP3.pdf)
+```text
+Gazebo simulates the warehouse, robot, lidar, RGB camera, and depth camera.
 
+ffw_bringup starts the simulator, controllers, bridges, and robot model.
 
+ffw_navigation uses the saved map, laser scan, odometry, TF, AMCL, and Nav2 to move the robot.
 
-Person Loaded into Gazebo world:
+person_detector_node.py runs YOLOv4-Tiny, detects the nearest person, and measures distance from depth data.
 
-[scrnli_68n6iVABcon2aL.pdf](https://github.com/user-attachments/files/30356497/scrnli_68n6iVABcon2aL.pdf)
+wave_interact.py owns the Nav2 goal, cancels it, confirms that the base stopped, sends the right-arm trajectory, confirms that the arm returned home, and resends the original goal.
+```
 
-Phase 2 launch:
+The final behaviour is:
 
-Detection:
+```text
+Receive goal → navigate → detect person → print distance once
+→ cancel goal → stop base → wave → arm home → resume original goal
+```
 
-https://github.com/user-attachments/assets/82776d06-bafd-40f1-ac10-93a9935db2fc
-
-
-Wave Movement:
-
-https://github.com/user-attachments/assets/0b04ab59-027e-463e-ad46-50e922cb64da
-
-
-Resuming and Reaching the Goal: 
-
-https://github.com/user-attachments/assets/b4a88a51-02a7-4623-b53d-f4e2c341d1f5
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+The main lesson is that this is an integration project. Detection, Nav2, controllers, actions, topics, odometry, joint feedback, and safety checks must all agree before the system moves to the next step.
 
 ---
+
+## Author
+
+**Nawar Amayri**  
+Electrical Engineering Internship Project

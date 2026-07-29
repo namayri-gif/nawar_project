@@ -8,7 +8,7 @@ from geometry_msgs.msg import PointStamped
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32
 
 
 class PersonDetectorNode(Node):
@@ -151,6 +151,11 @@ class PersonDetectorNode(Node):
             '/person_target',
             10,
         )
+        self.distance_pub = self.create_publisher(
+            Float32,
+            '/person_distance',
+            10,
+        )
         self.annotated_pub = None
         if self.publish_annotated:
             self.annotated_pub = self.create_publisher(
@@ -290,8 +295,6 @@ class PersonDetectorNode(Node):
             self.person_present = False
             self.get_logger().info('Person no longer detected')
 
-        self.detection_pub.publish(Bool(data=self.person_present))
-
         selected_index = None
         selected_depth = None
         selected_center = None
@@ -336,7 +339,22 @@ class PersonDetectorNode(Node):
                 image_height,
             )
             if target is not None:
+                # Publish distance and 3D target before the detection event so
+                # wave_interact has a valid measurement when TRUE arrives.
+                distance = math.sqrt(
+                    target.point.x * target.point.x
+                    + target.point.y * target.point.y
+                    + target.point.z * target.point.z
+                )
+                if math.isfinite(distance) and distance > 0.0:
+                    self.distance_pub.publish(
+                        Float32(data=float(distance))
+                    )
                 self.target_pub.publish(target)
+
+        # Publish detection after distance/target. This topic may update every
+        # frame; wave_interact deliberately logs only the first TRUE event.
+        self.detection_pub.publish(Bool(data=self.person_present))
 
         if self.publish_annotated and self.annotated_pub is not None:
             annotated = frame.copy()
@@ -496,4 +514,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-

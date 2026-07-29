@@ -920,6 +920,21 @@ The main lesson is that this is an integration project. Detection, Nav2, control
 
 ---
 
+## Demo
+
+Recieving the goal: 
+
+https://github.com/user-attachments/assets/23a88fe7-10a3-4a8a-93fc-5674d993fb64
+
+Wave Motion:
+
+https://github.com/user-attachments/assets/5a24bcc1-e051-4463-8c1f-7591e988cec9
+
+Resuming and finishing the goal:
+
+https://github.com/user-attachments/assets/d49be4d4-36fd-424b-b924-5e5f4ba77ca4
+
+---
 
 ## Author
 

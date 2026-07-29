@@ -216,6 +216,28 @@ Person Loaded into Gazebo world:
 
 Phase 2 launch:
 
+Detection:
+
+https://github.com/user-attachments/assets/82776d06-bafd-40f1-ac10-93a9935db2fc
+
+
+Wave Movement:
+
+https://github.com/user-attachments/assets/0b04ab59-027e-463e-ad46-50e922cb64da
+
+
+Resuming and Reaching the Goal: 
+
+https://github.com/user-attachments/assets/b4a88a51-02a7-4623-b53d-f4e2c341d1f5
+
+
+
+
+
+
+
+
+
 
 
 

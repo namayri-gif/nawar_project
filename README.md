@@ -822,18 +822,7 @@ Check that:
 ros2 topic list | grep zedm
 ```
 
-## 21. Person Is Detected but Distance Is Missing
-
-Check:
-
-```bash
-ros2 topic hz /zedm/depth/image_raw
-ros2 topic echo /zedm/camera_info --once
-```
-
-The detector rejects depth data that is too old compared with the RGB frame.
-
-## 22. Robot Detects but Does Not Stop
+## 21. Robot Detects but Does Not Stop
 
 The goal must pass through:
 
@@ -856,7 +845,7 @@ ros2 action info /navigate_to_pose
 ros2 topic echo /odom
 ```
 
-## 23. Robot Stops but Does Not Wave
+## 22. Robot Stops but Does Not Wave
 
 Check:
 
@@ -868,7 +857,7 @@ ros2 topic echo /joint_states
 
 The right-arm action server and all seven right-arm joint states must exist.
 
-## 24. Arm Moves Too Slowly
+## 23. Arm Moves Too Slowly
 
 Check:
 
@@ -880,7 +869,7 @@ Also check the `time_from_start` values in `wave_interact.py`. Larger times crea
 
 After changing robot or controller limits, rebuild and restart Gazebo.
 
-## 25. Navigation Does Not Resume
+## 24. Navigation Does Not Resume
 
 The node will not resume if:
 
@@ -891,7 +880,7 @@ The node will not resume if:
 
 This is intentional: navigation must not restart while the arm is raised.
 
-## 26. TF Errors
+## 25. TF Errors
 
 Check:
 
@@ -904,7 +893,7 @@ The frame names must match in the URDF, SLAM, AMCL, Nav2, and sensor messages.
 
 ---
 
-# 27. Final Summary
+# 26. Final Summary
 
 The final project joins perception, navigation, and manipulation into one ROS 2 system:
 

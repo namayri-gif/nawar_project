@@ -1,3 +1,0 @@
-[console_scripts]
-head_eef_tracker = ffw_bringup.head_eef_tracker:main
-joint_trajectory_executor = ffw_bringup.joint_trajectory_executor:main

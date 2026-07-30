@@ -1,6 +1,6 @@
 # AI Worker Simulation: Human-Aware Warehouse Robot
 
-Final internship project using **ROS 2 Jazzy, Gazebo, Nav2, SLAM Toolbox, OpenCV, YOLOv4-Tiny, MoveIt 2 configuration, and ros2_control**.
+Internship project 1 using **ROS 2 Jazzy, Gazebo, Nav2, SLAM Toolbox, OpenCV, YOLOv4-Tiny, MoveIt 2 configuration, and ros2_control**.
 
 ## 1. Project Idea
 

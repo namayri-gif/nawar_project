@@ -939,4 +939,4 @@ https://github.com/user-attachments/assets/d49be4d4-36fd-424b-b924-5e5f4ba77ca4
 ## Author
 
 **Nawar Amayri**  
-Electrical Engineering Internship Project
+Robotics Engineering Internship Project
